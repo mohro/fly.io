@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"sync"
+	"time"
 
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
@@ -60,13 +61,42 @@ func (s *Store) Read() []int {
 	return result
 }
 
+func MessageChannel(c chan<- bool) func(maelstrom.Message) error {
+	return func(record maelstrom.Message) error {
+		c <- true
+		return nil
+	}
+}
+func Send(message any, destination string, node *maelstrom.Node) {
+	delay := 1
+	retries := 0
+	// node.Send(destination, message)
+	for {
+		if retries > 10 {
+			break
+		}
+		respCh := make(chan bool, 1)
+		go node.RPC(destination, message, MessageChannel(respCh))
+		select {
+		case <-respCh:
+			return
+		case <-time.After(time.Duration(delay) * time.Second):
+			retries++
+			if retries < 4 {
+				delay *= 2
+			}
+			continue
+		}
+	}
+}
+
 func Broadcast(message int, neighbours []string, node *maelstrom.Node) {
 	response := map[string]any{}
 	response["type"] = "broadcast"
 	response["message"] = message
 
 	for _, neighbour := range neighbours {
-		node.Send(neighbour, response)
+		go Send(response, neighbour, node)
 	}
 
 }
